@@ -359,7 +359,7 @@
         });
 
         /**
-         * update expiration (updatefreq is splitted into days and hours on the form)
+         * update expiration (updatefreq is split into days and hours on the form)
          */
         $("#alias\\.updatefreq").change(function(){
             if ($(this).val() !== "") {
@@ -572,7 +572,7 @@
 <div id="aliases_stat"  title="{{ lang._('Current Tables Entries/Firewall Maximum Table Entries') }}">
     <div class="col-xs-1"><i class="fa fa-fw fa-info-circle"></i></div>
     <div id="entries_bar" class="progress" style="text-align: center;">
-        <div id="room_left" class="progress-bar" role="progressbar" aria-valuenow="0%" aria-valuemin="0" aria-valuemax="100" style="width: 23%;z-index: 0;"></div>
+        <div id="room_left" class="progress-bar" role="progressbar" aria-valuenow="0%" aria-valuemin="0" aria-valuemax="100" style="width: 0%; z-index: 0;"></div>
         <span class="state_text" style="position:absolute;right:0;left:0;">
         <span>{{ lang._('loading data..') }}</span>
         </span>
@@ -758,11 +758,12 @@
                                     </td>
                                     <td>
                                         <select id="alias.categories"  multiple="multiple" class="tokenize"></select>
-                                    </td>
-                                    <td>
-                                        <span class="help-block" id="help_block_alias.categories">
+                                        <span class="hidden" data-for="help_for_alias.categories">
                                             {{lang._('For grouping purposes you may select multiple groups here to organize items.')}}
                                         </span>
+                                    </td>
+                                    <td>
+                                        <span class="help-block" id="help_block_alias.categories"></span>
                                     </td>
                                 </tr>
                                 <tr id="row_alias.updatefreq">

@@ -27,12 +27,7 @@ all:
 	@cat ${.CURDIR}/README.md | ${PAGER}
 
 .include "Mk/defaults.mk"
-
-CORE_ABI?=	23.1
-CORE_MESSAGE?=	Carry on my wayward son
-CORE_NAME?=	opnsense-devel
-CORE_NICKNAME?=	Not Yet
-CORE_TYPE?=	development
+.include "Mk/version.mk"
 
 .for REPLACEMENT in ABI PHP PYTHON
 . if empty(CORE_${REPLACEMENT})
@@ -125,8 +120,13 @@ CORE_COPYRIGHT_HOLDER?=	Deciso B.V.
 CORE_COPYRIGHT_WWW?=	https://www.deciso.com/
 CORE_COPYRIGHT_YEARS?=	2014-2023
 
-CORE_DEPENDS_amd64?=	beep \
+CORE_DEPENDS_aarch64?=	py${CORE_PYTHON}-duckdb \
+			py${CORE_PYTHON}-numpy \
+			py${CORE_PYTHON}-pandas \
 			suricata-devel
+
+CORE_DEPENDS_amd64?=	beep \
+			${CORE_DEPENDS_aarch64}
 
 CORE_DEPENDS?=		ca_root_nss \
 			choparp \
@@ -161,7 +161,9 @@ CORE_DEPENDS?=		ca_root_nss \
 			php${CORE_PHP}-gettext \
 			php${CORE_PHP}-google-api-php-client \
 			php${CORE_PHP}-ldap \
+			php${CORE_PHP}-pcntl \
 			php${CORE_PHP}-pdo \
+			php${CORE_PHP}-pear-Crypt_CHAP \
 			php${CORE_PHP}-pecl-radius \
 			php${CORE_PHP}-phalcon \
 			php${CORE_PHP}-phpseclib \
@@ -174,10 +176,7 @@ CORE_DEPENDS?=		ca_root_nss \
 			pkg \
 			py${CORE_PYTHON}-Jinja2 \
 			py${CORE_PYTHON}-dnspython \
-			py${CORE_PYTHON}-duckdb \
 			py${CORE_PYTHON}-netaddr \
-			py${CORE_PYTHON}-numpy \
-			py${CORE_PYTHON}-pandas \
 			py${CORE_PYTHON}-requests \
 			py${CORE_PYTHON}-sqlite3 \
 			py${CORE_PYTHON}-ujson \
@@ -190,6 +189,7 @@ CORE_DEPENDS?=		ca_root_nss \
 			sudo \
 			syslog-ng \
 			unbound \
+			wireguard-kmod \
 			wpa_supplicant \
 			zip \
 			${CORE_DEPENDS_${CORE_ARCH}}
@@ -245,6 +245,9 @@ manifest:
 		fi; \
 	done
 	@echo "}"
+	@if [ -f ${WRKSRC}/usr/local/opnsense/version/core ]; then \
+	    echo "annotations $$(cat ${WRKSRC}/usr/local/opnsense/version/core)"; \
+	fi
 
 .if ${.TARGETS:Mupgrade}
 # lighter package format for quick completion
@@ -317,14 +320,14 @@ package: plist-check package-check clean-wrksrc
 .for CORE_DEPEND in ${CORE_DEPENDS}
 	@if ! ${PKG} info ${CORE_DEPEND} > /dev/null; then ${PKG} install -yfA ${CORE_DEPEND}; fi
 .endfor
-	@echo -n ">>> Generating metadata for ${CORE_NAME}-${CORE_PKGVERSION}..."
-	@${CORE_MAKE} DESTDIR=${WRKSRC} metadata
-	@echo " done"
 	@echo -n ">>> Staging files for ${CORE_NAME}-${CORE_PKGVERSION}..."
 	@${CORE_MAKE} DESTDIR=${WRKSRC} install
 	@echo " done"
 	@echo ">>> Generated version info for ${CORE_NAME}-${CORE_PKGVERSION}:"
 	@cat ${WRKSRC}/usr/local/opnsense/version/core
+	@echo -n ">>> Generating metadata for ${CORE_NAME}-${CORE_PKGVERSION}..."
+	@${CORE_MAKE} DESTDIR=${WRKSRC} metadata
+	@echo " done"
 	@echo ">>> Packaging files for ${CORE_NAME}-${CORE_PKGVERSION}:"
 	@PORTSDIR=${.CURDIR} ${PKG} create ${PKG_FORMAT} -v -m ${WRKSRC} \
 	    -r ${WRKSRC} -p ${WRKSRC}/plist -o ${PKGDIR}
@@ -352,6 +355,38 @@ lint-xml:
 	@find ${.CURDIR}/src ${.CURDIR}/Scripts \
 	    -name "*.xml*" -type f -print0 | xargs -0 -n1 xmllint --noout
 
+lint-model:
+	@for MODEL in $$(find ${.CURDIR}/src/opnsense/mvc/app/models -depth 3 \
+	    -name "*.xml"); do \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and (not(Required) or Required="N") and Default]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} has a spurious default value set"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and Default=""]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} has an empty default value set"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and BlankDesc="None"]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} blank description is the default"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and BlankDesc and Required="Y"]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} blank description not applicable on required field"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and BlankDesc and Multiple="Y"]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} blank description not applicable on multiple field"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and Multiple="N"]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} Multiple=N is the default"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and Required="N"]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} Required=N is the default"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type and not(@type="ArrayField") and OptionValues[default[not(@value)] or multiple[not(@value)] or required[not(@value)]]]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} option element default/multiple/required without value attribute"; \
+		done; \
+		(xmllint $${MODEL} --xpath '//*[@type="CSVListField" and Mask and (not(MaskPerItem) or MaskPerItem=N)]' 2> /dev/null | grep '^<' || true) | while read LINE; do \
+			echo "$${MODEL}: $${LINE} uses Mask regex with MaskPerItem=N"; \
+		done; \
+	done
+
 SCRIPTDIRS!=	find ${.CURDIR}/src/opnsense/scripts -type d -depth 1
 
 lint-exec:
@@ -369,7 +404,7 @@ LINTBIN?=	${.CURDIR}/contrib/parallel-lint/parallel-lint
 lint-php:
 	@${LINTBIN} src
 
-lint: plist-check lint-shell lint-xml lint-exec lint-php
+lint: plist-check lint-shell lint-xml lint-model lint-exec lint-php
 
 sweep:
 	find ${.CURDIR}/src -type f -name "*.map" -print0 | \
@@ -408,6 +443,15 @@ style-fix: debug
 .for STYLEDIR in ${STYLEDIRS}
 	phpcbf --standard=ruleset.xml ${.CURDIR}/${STYLEDIR} || true
 .endfor
+
+style-model:
+	@for MODEL in $$(find ${.CURDIR}/src/opnsense/mvc/app/models -depth 3 \
+	    -name "*.xml"); do \
+		perl -i -pe 's/<default>(.*?)<\/default>/<Default>$$1<\/Default>/g' $${MODEL}; \
+		perl -i -pe 's/<multiple>(.*?)<\/multiple>/<Multiple>$$1<\/Multiple>/g' $${MODEL}; \
+		perl -i -pe 's/<required>(.*?)<\/required>/<Required>$$1<\/Required>/g' $${MODEL}; \
+		perl -i -pe 's/<mask>(.*?)<\/mask>/<Mask>$$1<\/Mask>/g' $${MODEL}; \
+	done
 
 style: style-python style-php
 
@@ -488,6 +532,9 @@ push:
 
 migrate:
 	@src/opnsense/mvc/script/run_migrations.php
+
+validate:
+	@src/opnsense/mvc/script/run_validations.php
 
 test: debug
 	@if [ "$$(${VERSIONBIN} -v)" != "${CORE_PKGVERSION}" ]; then \

@@ -34,9 +34,7 @@
         <Configuration cssClass="fa fa-history fa-fw">
             <Backups url="/diag_backup.php"/>
             <Defaults url="/diag_defaults.php"/>
-            <History url="/diag_confbak.php">
-                <none url="/diag_confbak.php*" visibility="hidden"/>
-            </History>
+            <History url="/ui/core/backup/history/this"/>
         </Configuration>
         <Firmware cssClass="fa fa-building-o fa-fw">
             <Status order="10" url="/ui/core/firmware#status"/>
@@ -127,16 +125,13 @@
             <GRE url="/interfaces_gre.php">
                 <Edit url="/interfaces_gre_edit.php*" visibility="hidden"/>
             </GRE>
-            <LAGG url="/interfaces_lagg.php">
-                <Edit url="/interfaces_lagg_edit.php*" visibility="hidden"/>
-            </LAGG>
         </Types>
         <Diagnostics order="970" cssClass="fa fa-medkit fa-fw">
             <DNSLookup VisibleName="DNS Lookup" url="/ui/diagnostics/dns_diagnostics"/>
             <PacketCapture VisibleName="Packet Capture" url="/ui/diagnostics/packet_capture"/>
             <Ping url="/ui/diagnostics/ping"/>
-            <TestPort VisibleName="Port Probe" url="/diag_testport.php"/>
-            <Traceroute VisibleName="Trace Route" url="/diag_traceroute.php"/>
+            <TestPort VisibleName="Port Probe" url="/ui/diagnostics/portprobe"/>
+            <Traceroute VisibleName="Trace Route" url="/ui/diagnostics/traceroute"/>
         </Diagnostics>
     </Interfaces>
     <Firewall order="40" cssClass="glyphicon glyphicon-fire">
@@ -144,9 +139,7 @@
             <Edit url="/ui/firewall/alias/*" visibility="hidden"/>
         </Aliases>
         <Categories url="/ui/firewall/category" cssClass="fa fa-tags fa-fw"/>
-        <Groups url="/interfaces_groups.php" cssClass="fa fa-sitemap fa-fw">
-            <Edit url="/interfaces_groups_edit.php*" visibility="hidden"/>
-        </Groups>
+        <Groups url="/ui/firewall/group" cssClass="fa fa-sitemap fa-fw"/>
         <NAT cssClass="fa fa-exchange fa-fw">
             <PortForward order="100" VisibleName="Port Forward" url="/firewall_nat.php">
                 <Edit url="/firewall_nat_edit.php*" visibility="hidden"/>
@@ -188,27 +181,24 @@
     <Services order="60" cssClass="fa fa-cog">
         <DHCPv4 cssClass="fa fa-bullseye fa-fw">
             <Relay order="200" url="/services_dhcp_relay.php"/>
-            <Leases order="300" url="/status_dhcp_leases.php">
-                <Details url="/status_dhcp_leases.php?*" visibility="hidden"/>
-            </Leases>
+            <Leases order="300" url="/ui/dhcpv4/leases"/>
             <LogFile VisibleName="Log File" order="400" url="/ui/diagnostics/log/core/dhcpd"/>
         </DHCPv4>
         <DHCPv6 cssClass="fa fa-bullseye fa-fw">
             <Relay order="300" url="/services_dhcpv6_relay.php"/>
-            <Leases order="400" url="/status_dhcpv6_leases.php">
-                <Details url="/status_dhcpv6_leases.php?*" visibility="hidden"/>
-            </Leases>
+            <Leases order="400" url="/ui/dhcpv6/leases"/>
         </DHCPv6>
         <OpenDNS VisibleName="OpenDNS" url="/services_opendns.php" cssClass="fa fa-tags fa-fw"/>
         <RouterAdv VisibleName="Router Advertisements" cssClass="fa fa-bullseye fa-fw" />
     </Services>
     <VPN order="50" cssClass="fa fa-globe">
         <OpenVPN cssClass="fa fa-lock fa-fw" order="20">
-            <Servers order="10" url="/vpn_openvpn_server.php">
+            <Instances url="/ui/openvpn/instances"/>
+            <Servers VisibleName="Servers [legacy]" order="10" url="/vpn_openvpn_server.php">
                 <Edit url="/vpn_openvpn_server.php?*" visibility="hidden"/>
                 <Step url="/wizard.php?xml=openvpn*" visibility="hidden"/>
             </Servers>
-            <Clients order="20" url="/vpn_openvpn_client.php">
+            <Clients VisibleName="Clients [legacy]" order="20" url="/vpn_openvpn_client.php">
                 <Edit url="/vpn_openvpn_client.php?*" visibility="hidden"/>
             </Clients>
             <CSC order="30" VisibleName="Client Specific Overrides" url="/ui/openvpn/client_overwrites"/>

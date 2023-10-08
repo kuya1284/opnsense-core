@@ -27,7 +27,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-require_once("config.inc");
+require_once("legacy_bindings.inc");
 require_once("util.inc");
 require_once("plugins.inc.d/openvpn.inc");
 
@@ -36,25 +36,19 @@ openlog("openvpn", LOG_ODELAY, LOG_AUTH);
 $common_name = getenv("common_name");
 $vpnid = getenv("auth_server");
 $config_file = getenv("config_file");
-if (isset($config['openvpn']['openvpn-server'])) {
-    foreach ($config['openvpn']['openvpn-server'] as $server) {
-        if ($server['vpnid'] == $vpnid) {
-            // XXX: Eventually we should move the responsibility to determine if we do want to write a file
-            //      to here instead of the configuration file (always call event, filter relevant).
-            $cso = (new OPNsense\OpenVPN\OpenVPN())->getOverwrite($vpnid, $common_name);
-            if (empty($cso)) {
-                $cso = array("common_name" => $common_name);
-            }
-            if (!empty($config_file)) {
-                $cso_filename = openvpn_csc_conf_write($cso, $server, $config_file);
-                if (!empty($cso_filename)) {
-                    syslog(LOG_NOTICE, "client config created @ {$cso_filename}");
-                }
-            } else {
-                syslog(LOG_NOTICE, "unable to write client config for {$common_name}, missing target filename");
-            }
-            break;
+$server = (new OPNsense\OpenVPN\OpenVPN())->getInstanceById($vpnid, 'server');
+if ($server) {
+    $cso = (new OPNsense\OpenVPN\OpenVPN())->getOverwrite($vpnid, $common_name);
+    if (empty($cso)) {
+        $cso = array("common_name" => $common_name);
+    }
+    if (!empty($config_file)) {
+        $cso_filename = openvpn_csc_conf_write($cso, $server, $config_file);
+        if (!empty($cso_filename)) {
+            syslog(LOG_NOTICE, "client config created @ {$cso_filename}");
         }
+    } else {
+        syslog(LOG_NOTICE, "unable to write client config for {$common_name}, missing target filename");
     }
 }
 

@@ -178,14 +178,12 @@ function system_resolvconf_host_routes()
 
 function system_resolvconf_generate($verbose = false)
 {
-    global $config;
-
     service_log('Generating /etc/resolv.conf...', $verbose);
 
     $syscfg = config_read_array('system');
     $resolvconf = '';
-    $search = [];
     $routes = [];
+    $search = [];
 
     mwexecf(
         '/etc/rc.d/ip6addrctl %s',
@@ -194,24 +192,19 @@ function system_resolvconf_generate($verbose = false)
 
     if (!empty($syscfg['domain'])) {
         $resolvconf = "domain {$syscfg['domain']}\n";
-        $search[] = $syscfg['domain'];
-    }
-
-    if (!empty($syscfg['dnssearchdomain'])) {
-        /* add custom search entries after default domain before potential provider entries */
-        $search[] = $syscfg['dnssearchdomain'];
     }
 
     if (!isset($syscfg['dnslocalhost']) && !empty(service_by_filter(['dns_ports' => '53']))) {
         $resolvconf .= "nameserver 127.0.0.1\n";
     }
 
-    $search = array_merge($search, get_searchdomains());
     $routes = system_resolvconf_host_routes();
 
     foreach (array_keys($routes) as $host) {
         $resolvconf .= "nameserver {$host}\n";
     }
+
+    $search = get_searchdomains();
 
     if (count($search)) {
         $result = $search[0];
@@ -237,10 +230,9 @@ function system_resolvconf_generate($verbose = false)
 
     /* setup static routes for DNS servers as configured */
     foreach ($routes as $host => $gateway) {
-        if (empty($gateway)) {
-            continue;
+        if (!empty($gateway)) {
+            system_host_route($host, $gateway);
         }
-        system_host_route($host, $gateway);
     }
 
     service_log("done.\n", $verbose);
@@ -248,24 +240,30 @@ function system_resolvconf_generate($verbose = false)
 
 function get_locale_list()
 {
-    $locales = array();
+    $locales = [];
 
     /* first one is the default */
     $locales['en_US'] = gettext('English');
-    $locales['cs_CZ'] = gettext('Czech');
     $locales['zh_CN'] = gettext('Chinese (Simplified)');
+    $locales['cs_CZ'] = gettext('Czech');
     $locales['fr_FR'] = gettext('French');
     $locales['de_DE'] = gettext('German');
     $locales['it_IT'] = gettext('Italian');
     $locales['ja_JP'] = gettext('Japanese');
+    $locales['ko_KR'] = gettext('Korean');
     $locales['no_NO'] = gettext('Norwegian');
-    $locales['po_PL'] = gettext('Polish'); /* development only */
+    $locales['pl_PL'] = gettext('Polish');
     $locales['pt_BR'] = gettext('Portuguese (Brazil)');
     $locales['pt_PT'] = gettext('Portuguese (Portugal)');
     $locales['ru_RU'] = gettext('Russian');
     $locales['es_ES'] = gettext('Spanish');
     $locales['tr_TR'] = gettext('Turkish');
-    $locales['vi_VN'] = gettext('Vietnamese'); /* development only */
+    $locales['vi_VN'] = gettext('Vietnamese');
+
+    if (!product::getInstance()->development()) {
+        /* below 30% progress */
+        unset($locales['vi_VN']);
+    }
 
     return $locales;
 }
@@ -306,6 +304,20 @@ function get_searchdomains()
     $master_list = [];
     $search_list = [];
 
+    if (!empty($syscfg['domain'])) {
+        $master_list[] = $syscfg['domain'];
+    }
+
+    if (!empty($syscfg['dnssearchdomain'])) {
+        if ($syscfg['dnssearchdomain'] == '.') {
+            /* pass root only */
+            return [$syscfg['dnssearchdomain']];
+        }
+
+        /* add custom search entries after default domain before potential provider entries */
+        $master_list[] = $syscfg['dnssearchdomain'];
+    }
+
     if (isset($syscfg['dnsallowoverride'])) {
         /* return domains as required by configuration */
         $list = shell_safe('/usr/local/sbin/ifctl -sl');
@@ -332,7 +344,7 @@ function get_nameservers($interface = null, $with_gateway = false)
 {
     global $config;
 
-    $gateways = new \OPNsense\Routing\Gateways(legacy_interfaces_details());
+    $gateways = new \OPNsense\Routing\Gateways();
     $syscfg = config_read_array('system');
     $exclude_interfaces = [];
     $master_list = [];
@@ -531,8 +543,70 @@ function system_host_route($host, $gateway)
     mwexecf('/sbin/route add -host -%s %s %s', [$family, $host, $gateway]);
 }
 
-function system_default_route($gateway, $interface, $far = false)
+function system_interface_route($gw, $routes)
 {
+    $interface = $gw['interface'];
+    $gateway = $gw['gateway'];
+    $far = isset($gw['fargw']);
+    $device = $gw['if'];
+    $family = 'inet';
+
+    if (!is_ipaddrv4($gateway)) {
+        log_msg("ROUTING: not a valid interface gateway address: '{$gateway}'", LOG_ERR);
+        return;
+    }
+
+    if (!$far) {
+        /* special case tries to turn on far gateway when required for dynamic gateway */
+        $dynamicgw = trim(@file_get_contents("/tmp/{$device}_router") ?? '');
+        if (!empty($dynamicgw) && $gateway === $dynamicgw) {
+            list (, $network) = interfaces_primary_address($interface);
+            if (!empty($network) && !ip_in_subnet($gateway, $network)) {
+                /*
+                 * If we do not fail primary network detection and the local address
+                 * is in not the same network as the gateway address set far flag.
+                 */
+                $far = 1;
+
+                log_msg("ROUTING: treating '{$gateway}' as far gateway for '{$network}'");
+            }
+        }
+    }
+
+    if (!$far) {
+        /* nothing to do */
+        return;
+    }
+
+    foreach ($routes as $route) {
+        /* find host routes on the link for the underlying device */
+        if ($route['netif'] != $device) {
+            continue;
+        } elseif ($route['proto'] != 'ipv4') {
+            continue;
+        } elseif (strpos($route['gateway'], 'link#') !== 0) {
+            continue;
+        /* XXX may consider "S" as well for manually assigned */
+        } elseif (strpos($route['flags'], 'H') === false) {
+            continue;
+        }
+
+        /* keeping previous, but do not log this noisy operation */
+        return;
+    }
+
+    log_msg("ROUTING: setting {$family} interface route to {$gateway} via {$device}");
+
+    /* never remove interface routes -- we only try to add if missing */
+    mwexecf('/sbin/route add -%s %s -interface %s', [$family, $gateway, $device]);
+}
+
+function system_default_route($gw, $routes)
+{
+    $interface = $gw['interface'];
+    $gateway = $gw['gateway'];
+    $device = $gw['if'];
+
     if (is_ipaddrv4($gateway)) {
         $family = 'inet';
     } elseif (is_ipaddrv6($gateway)) {
@@ -542,50 +616,28 @@ function system_default_route($gateway, $interface, $far = false)
         return;
     }
 
-    $realif = get_real_interface($interface, $family == 'inet' ? 'all' : 'inet6');
-
     if (is_linklocal($gateway)) {
-        $gateway .= "%{$realif}";
+        /* XXX always inet6 but why not do this elsewhere */
+        $gateway .= "%{$device}";
     }
 
-    /* XXX while this does prevent unnecessary work it cannot detect a flip of far gateway setting */
-    $tmpcmd = "/sbin/route -n get -{$family} default 2>/dev/null | /usr/bin/awk '/gateway:/ {print $2}'";
-    $current = trim(exec($tmpcmd), " \n");
-    if ($current == $gateway) {
-        log_msg("ROUTING: keeping current {$family} default gateway '{$gateway}'");
-        return;
-    }
-
-    if ($family == 'inet') {
-        $dynamicgw = trim(@file_get_contents("/tmp/${realif}_router") ?? '');
-        if (!empty($dynamicgw) && $gateway === $dynamicgw) {
-            /* special case tries to turn on far gateway when required for dynamic gateway */
-            list (, $network) = interfaces_primary_address($interface);
-            if (empty($network) || ip_in_subnet($gateway, $network)) {
-                /*
-                 * If we fail a primary network detection or the local address
-                 * is in the same network as the gateway address do nothing.
-                 */
-                $realif = null;
-            } else {
-                log_msg("ROUTING: treating '{$gateway}' as far gateway for '{$network}'");
-            }
-        } elseif (!$far) {
-            /* standard case disables host routes when not set in a static gateway */
-            $realif = null;
+    foreach ($routes as $route) {
+        /* find out if the default route matches what we want to set */
+        if ($route['proto'] != ($family == 'inet6' ? 'ipv6' : 'ipv4')) {
+            continue;
+        } elseif ($route['destination'] != 'default') {
+            continue;
+        } elseif ($route['gateway'] != $gateway) {
+            continue;
         }
-    } else {
-        /* IPv6 does not support far gateway notion */
-        $realif = null;
+
+        log_msg("ROUTING: keeping {$family} default route to {$gateway}");
+        return;
     }
 
     log_msg("ROUTING: setting {$family} default route to {$gateway}");
 
     mwexecf('/sbin/route delete -%s default', [$family], true);
-    if (!empty($realif)) {
-        mwexecf('/sbin/route delete -%s %s -interface %s', [$family, $gateway, $realif], true);
-        mwexecf('/sbin/route add -%s %s -interface %s', [$family, $gateway, $realif]);
-    }
     mwexecf('/sbin/route add -%s default %s', [$family, $gateway]);
 }
 
@@ -593,17 +645,29 @@ function system_routing_configure($verbose = false, $interface = null, $monitor 
 {
     global $config;
 
-    service_log(sprintf('Setting up route%s...', empty($interface) ? 's' : " {$interface}"), $verbose);
+    service_log(sprintf('Setting up routes%s...', empty($interface) ? '' : " for {$interface}"), $verbose);
 
     if (!empty($interface)) {
-        log_msg("ROUTING: entering configure using '${interface}'", LOG_DEBUG);
+        log_msg("ROUTING: entering configure using '{$interface}'", LOG_DEBUG);
     } else {
         log_msg("ROUTING: entering configure using defaults", LOG_DEBUG);
     }
 
     $ifdetails = legacy_interfaces_details();
-    $gateways = new \OPNsense\Routing\Gateways($ifdetails);
+    $gateways = new \OPNsense\Routing\Gateways();
     $down_gateways = isset($config['system']['gw_switch_default']) ? return_down_gateways() : [];
+    $routes = json_decode(configd_run('interface routes list -n json'), true) ?? [];
+
+    foreach ($gateways->gatewaysIndexedByName() as $gateway) {
+        /* check if we need to add a required interface route to the gateway (IPv4 only) */
+        if ($gateway['ipprotocol'] !== 'inet' || ($family !== null && $family !== 'inet')) {
+            continue;
+        } elseif (!empty($interface) && $interface != $gateway['interface']) {
+            continue;
+        }
+
+        system_interface_route($gateway, $routes);
+    }
 
     if (!empty($down_gateways)) {
         log_msg(sprintf('ROUTING: ignoring down gateways: %s', implode(', ', $down_gateways)), LOG_DEBUG);
@@ -615,18 +679,19 @@ function system_routing_configure($verbose = false, $interface = null, $monitor 
         }
 
         $gateway = $gateways->getDefaultGW($down_gateways, $ipproto);
-        if ($gateway == null) {
+        if (empty($gateway['gateway'])) {
             continue;
         }
 
         if (isset($config['system']['gw_switch_default']) || empty($interface) || $interface == $gateway['interface']) {
             if (empty($ifdetails[$gateway['if']][$type][0])) {
-                log_msg("ROUTING: refusing to set {$ipproto} gateway on addressless {$gateway['interface']}", LOG_ERR);
+                log_msg("ROUTING: refusing to set {$ipproto} gateway on addressless {$gateway['interface']}({$gateway['if']})", LOG_ERR);
                 continue;
             }
 
             log_msg("ROUTING: configuring {$ipproto} default gateway on {$gateway['interface']}", LOG_INFO);
-            system_default_route($gateway['gateway'], $gateway['interface'], isset($gateway['fargw']));
+
+            system_default_route($gateway, $routes);
         }
     }
 
@@ -635,7 +700,7 @@ function system_routing_configure($verbose = false, $interface = null, $monitor 
         $gateways_arr = $gateways->gatewaysIndexedByName(false, true);
         foreach ($static_routes as $rtent) {
             if (empty($gateways_arr[$rtent['gateway']])) {
-                log_msg(sprintf('Static Routes: Gateway IP could not be found for %s', $rtent['network']), LOG_WARNING);
+                log_msg(sprintf('ROUTING: gateway IP could not be found for %s', $rtent['network']), LOG_WARNING);
                 continue;
             }
             $gateway = $gateways_arr[$rtent['gateway']];
@@ -648,7 +713,7 @@ function system_routing_configure($verbose = false, $interface = null, $monitor 
             } elseif (is_subnetv6($rtent['network'])) {
                 $ipproto = 'inet6';
             } else {
-                log_msg(sprintf('Cannot add static route to: %s', $rtent['network']), LOG_ERR);
+                log_msg(sprintf('ROUTING: cannot add static route to "%s"', $rtent['network']), LOG_ERR);
                 continue;
             }
 
@@ -670,6 +735,7 @@ function system_routing_configure($verbose = false, $interface = null, $monitor 
                     break;
             }
 
+            /* XXX some day we might want to convert to safer mwexecf() */
             $cmd = " -{$ipproto} {$blackhole} " . escapeshellarg($rtent['network']) . " ";
 
             if (!empty($rtent['disabled'])) {
@@ -679,14 +745,14 @@ function system_routing_configure($verbose = false, $interface = null, $monitor 
                     mwexec("/sbin/route delete {$cmd}", true);
                     if ($fargw) {
                         mwexecf('/sbin/route delete -%s %s -interface %s ', [$ipproto, $gatewayip, $interfacegw], true);
-                        mwexecf('/sbin/route add %s -%s -interface %s', [$ipproto, $gatewayip, $interfacegw], true);
+                        mwexecf('/sbin/route add -%s %s -interface %s', [$ipproto, $gatewayip, $interfacegw]);
                     } elseif (is_linklocal($gatewayip) && strpos($gatewayip, '%') === false) {
                         $gatewayip .= "%{$interfacegw}";
                     }
-                    mwexec("/sbin/route add" . $cmd . escapeshellarg($gatewayip), true);
+                    mwexec("/sbin/route add" . $cmd . escapeshellarg($gatewayip));
                 } elseif (!empty($interfacegw)) {
                     mwexec("/sbin/route delete" . $cmd . "-interface " . escapeshellarg($interfacegw), true);
-                    mwexec("/sbin/route add" . $cmd . "-interface " . escapeshellarg($interfacegw), true);
+                    mwexec("/sbin/route add" . $cmd . "-interface " . escapeshellarg($interfacegw));
                 }
             }
         }
@@ -698,7 +764,7 @@ function system_routing_configure($verbose = false, $interface = null, $monitor 
         if (!empty($interface)) {
             $reloads = [];
 
-            foreach ($gateways->gatewaysIndexedByName(true) as $name => $gateway) {
+            foreach ($gateways->gatewaysIndexedByName() as $name => $gateway) {
                 if ($family !== null && $family !== $gateway['ipprotocol']) {
                     continue;
                 }
@@ -1130,7 +1196,7 @@ function system_login_configure($verbose = false)
         if (!empty($value)) {
             $new_loader_conf .= "{$param}={$value}\n";
         } else {
-            $new_loader_conf .= "#${param}\n";
+            $new_loader_conf .= "#{$param}\n";
         }
     }
     $new_loader_conf .= "\n";
@@ -1159,14 +1225,15 @@ function system_login_configure($verbose = false)
 
     foreach ($etc_ttys_lines as $tty) {
         /* virtual terminals */
-        foreach (array('ttyv0', 'ttyv1', 'ttyv2', 'ttyv3', 'ttyv4', 'ttyv5', 'ttyv6', 'ttyv7') as $virtualport) {
+        foreach (['ttyv0', 'ttyv1', 'ttyv2', 'ttyv3', 'ttyv4', 'ttyv5', 'ttyv6', 'ttyv7'] as $virtualport) {
             if (strpos($tty, $virtualport) === 0) {
-                fwrite($fd, "{$virtualport}\t\"/usr/libexec/getty {$console_type}\"\t\txterm\t${on_off_secure_v}\n");
+                fwrite($fd, "{$virtualport}\t\"/usr/libexec/getty {$console_type}\"\t\txterm\t{$on_off_secure_v}\n");
                 continue 2;
             }
         }
+
         /* serial terminals */
-        foreach (array('tty%s0', 'tty%s1', 'tty%s2', 'tty%s3') as $serialport) {
+        foreach (['tty%s0', 'tty%s1', 'tty%s2', 'tty%s3'] as $serialport) {
             $serialport = sprintf($serialport, isset($config['system']['serialusb']) ? 'U' : 'u');
             if (stripos($tty, $serialport) === 0) {
                 fwrite($fd, "{$serialport}\t\"/usr/libexec/getty {$serial_type}\"\tvt100\t{$on_off_secure_u}\n");
@@ -1174,14 +1241,17 @@ function system_login_configure($verbose = false)
             }
         }
 
-        if (!empty($tty) && strpos($tty, 'xc0') === false) {
+        /* xen terminal */
+        if (strpos($tty, 'xc0') === 0) {
+            $on_off_secure_w = $virtual_enabled ? 'onifconsole secure' : 'off secure';
+            fwrite($fd, "xc0\t\"/usr/libexec/getty {$console_type}\"\t\txterm\t{$on_off_secure_w}\n");
+            continue;
+        }
+
+        if (!empty($tty)) {
             /* all other lines stay the same */
             fwrite($fd, $tty . "\n");
         }
-    }
-
-    if (file_exists('/dev/xc0')) {
-        fwrite($fd, "xc0\t\"/usr/libexec/getty {$console_type}\"\t\txterm\t${on_off_secure_v}\n");
     }
 
     fclose($fd);

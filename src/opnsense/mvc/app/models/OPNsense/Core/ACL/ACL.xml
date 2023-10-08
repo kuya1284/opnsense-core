@@ -80,7 +80,8 @@
     <page-diagnostics-configurationhistory>
         <name>Diagnostics: Configuration History</name>
         <patterns>
-            <pattern>diag_confbak.php*</pattern>
+            <pattern>ui/core/backup/history*</pattern>
+            <pattern>api/core/backup/*</pattern>
         </patterns>
     </page-diagnostics-configurationhistory>
     <page-diagnostics-factorydefaults>
@@ -191,13 +192,15 @@
     <page-diagnostics-testport>
         <name>Diagnostics: Test Port</name>
         <patterns>
-            <pattern>diag_testport.php*</pattern>
+            <pattern>ui/diagnostics/portprobe*</pattern>
+            <pattern>api/diagnostics/portprobe/*</pattern>
         </patterns>
     </page-diagnostics-testport>
     <page-diagnostics-traceroute>
         <name>Diagnostics: Traceroute</name>
         <patterns>
-            <pattern>diag_traceroute.php*</pattern>
+            <pattern>ui/diagnostics/traceroute*</pattern>
+            <pattern>api/diagnostics/traceroute/*</pattern>
         </patterns>
     </page-diagnostics-traceroute>
     <page-firewall-alias-edit>
@@ -380,30 +383,13 @@
             <pattern>interfaces_gre_edit.php*</pattern>
         </patterns>
     </page-interfaces-gre-edit>
-    <page-interfaces-groups>
-        <name>Interfaces: Groups</name>
-        <patterns>
-            <pattern>interfaces_groups.php*</pattern>
-        </patterns>
-    </page-interfaces-groups>
     <page-interfaces-groups-edit>
         <name>Interfaces: Groups: Edit</name>
         <patterns>
-            <pattern>interfaces_groups_edit.php*</pattern>
+            <pattern>ui/firewall/group</pattern>
+            <pattern>api/firewall/group/*</pattern>
         </patterns>
     </page-interfaces-groups-edit>
-    <page-interfaces-lagg-edit>
-        <name>Interfaces: LAGG: Edit</name>
-        <patterns>
-            <pattern>interfaces_lagg_edit.php*</pattern>
-        </patterns>
-    </page-interfaces-lagg-edit>
-    <page-interfaces-lagg>
-        <name>Interfaces: LAGG</name>
-        <patterns>
-            <pattern>interfaces_lagg.php*</pattern>
-        </patterns>
-    </page-interfaces-lagg>
     <page-interfaces-ppps>
         <name>Interfaces: PPPs</name>
         <patterns>
@@ -497,13 +483,15 @@
     <page-status-dhcpleases>
         <name>Status: DHCP leases</name>
         <patterns>
-            <pattern>status_dhcp_leases.php*</pattern>
+            <pattern>ui/dhcpv4/leases</pattern>
+            <pattern>api/dhcpv4/leases/*</pattern>
         </patterns>
     </page-status-dhcpleases>
     <page-status-dhcpv6leases>
         <name>Status: DHCPv6 leases</name>
         <patterns>
-            <pattern>status_dhcpv6_leases.php*</pattern>
+            <pattern>ui/dhcpv6/leases</pattern>
+            <pattern>api/dhcpv6/leases/*</pattern>
         </patterns>
     </page-status-dhcpv6leases>
     <page-status-interfaces>
@@ -745,6 +733,13 @@
             <pattern>api/openvpn/client_overwrites/*</pattern>
         </patterns>
     </page-openvpn-csc>
+    <page-openvpn-instances>
+        <name>VPN: OpenVPN: Instances</name>
+        <patterns>
+            <pattern>ui/openvpn/instances</pattern>
+            <pattern>api/openvpn/instances/*</pattern>
+        </patterns>
+    </page-openvpn-instances>
     <page-openvpn-server>
         <name>VPN: OpenVPN: Server</name>
         <patterns>

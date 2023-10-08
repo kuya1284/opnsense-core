@@ -2,7 +2,7 @@
 <?php
 
 /*
- * Copyright (C) 2016-2020 Deciso B.V.
+ * Copyright (C) 2016-2023 Deciso B.V.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,11 +30,12 @@
 require_once 'config.inc';
 require_once 'util.inc';
 require_once 'interfaces.inc';
+require_once 'plugins.inc.d/dpinger.inc';
 
 $result = [];
-$gateways_status = return_gateways_status();
+$gateways_status = dpinger_status();
 
-foreach ((new \OPNsense\Routing\Gateways(legacy_interfaces_details()))->gatewaysIndexedByName() as $gname => $gw) {
+foreach ((new \OPNsense\Routing\Gateways())->gatewaysIndexedByName() as $gname => $gw) {
     $gatewayItem = ['name' => $gname];
     $gatewayItem['address'] = !empty($gw['gateway']) ? $gw['gateway'] : '~';
     if (!empty($gateways_status[$gname])) {
@@ -72,6 +73,8 @@ foreach ((new \OPNsense\Routing\Gateways(legacy_interfaces_details()))->gateways
         $gatewayItem['stddev'] = '~';
         $gatewayItem['delay'] = '~';
     }
+
     $result[] = $gatewayItem;
 }
+
 echo json_encode($result) . PHP_EOL;

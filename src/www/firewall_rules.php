@@ -115,20 +115,22 @@ function firewall_rule_item_proto($filterent)
       "mtraceresp" => gettext("mtrace response"),
       "mtrace" => gettext("mtrace messages")
     );
-    if (isset($filterent['protocol']) && $filterent['protocol'] == "icmp" && !empty($filterent['icmptype'])) {
+    if (isset($filterent['protocol']) && $filterent['protocol'] == 'icmp' && !empty($filterent['icmptype'])) {
         $result = $record_ipprotocol;
+        $icmplabel = $icmptypes[$filterent['icmptype']] ?? $filterent['icmptype'];
         $result .= sprintf(
-          "<span data-toggle=\"tooltip\" title=\"ICMP type: %s \"> %s </span>",
-          html_safe($icmptypes[$filterent['icmptype']]),
-          isset($filterent['protocol']) ? strtoupper($filterent['protocol']) : "*"
+          '<span data-toggle="tooltip" title="ICMP type: %s">%s</span>',
+          html_safe($icmplabel),
+          isset($filterent['protocol']) ? strtoupper($filterent['protocol']) : '*'
         );
         return $result;
     } elseif (isset($filterent['protocol']) && !empty($filterent['icmp6-type'])) {
         $result = $record_ipprotocol;
+        $icmplabel = $icmp6types[$filterent['icmp6-type']] ?? $filterent['icmp6-type'];
         $result .= sprintf(
-          "<span data-toggle=\"tooltip\" title=\"ICMP6 type: %s \"> %s </span>",
-          html_safe($icmp6types[$filterent['icmp6-type']]),
-          isset($filterent['protocol']) ? strtoupper($filterent['protocol']) : "*"
+          '<span data-toggle="tooltip" title="ICMP6 type: %s">%s</span>',
+          html_safe($icmplabel),
+          isset($filterent['protocol']) ? strtoupper($filterent['protocol']) : '*'
         );
         return $result;
     } else {
@@ -213,10 +215,10 @@ function filter_rule_item_alias_tooltip($alias_name)
 {
     $alias_descr = htmlspecialchars(get_alias_description($alias_name));
     $alias_name = htmlspecialchars($alias_name);
-    $result = "<span title=\"${alias_descr}\" data-toggle=\"tooltip\"  data-html=\"true\">";
+    $result = "<span title=\"{$alias_descr}\" data-toggle=\"tooltip\"  data-html=\"true\">";
     $result .= $alias_name . "&nbsp;";
     $result .= "</span>";
-    $result .= "<a href=\"/ui/firewall/alias/index/${alias_name}\"";
+    $result .= "<a href=\"/ui/firewall/alias/index/{$alias_name}\"";
     $result .= "  title=\"". gettext("edit alias") ."\" data-toggle=\"tooltip\">";
     $result .= "<i class=\"fa fa-list\"></i>";
     $result .= "</a>";
@@ -736,7 +738,7 @@ $( document ).ready(function() {
 <?php
                 $ifgroups = [];
                 foreach (config_read_array('ifgroups', 'ifgroupentry') as $ifgroup) {
-                    if (!empty($ifgroup['members']) && in_array($selected_if, explode(' ', $ifgroup['members']))) {
+                    if (!empty($ifgroup['members']) && in_array($selected_if, preg_split('/[ |,]+/', $ifgroup['members']))) {
                         $ifgroups[] = $ifgroup['ifname'];
                     }
                 }
@@ -755,12 +757,17 @@ $( document ).ready(function() {
                     if (empty($ifgroups) && $rule->ruleOrigin() == 'group'){
                         // group view, skip group section (groups can't be nested)
                         $is_selected = false;
-                    } elseif ($rule->getInterface() == $selected_if) {
+                    } elseif ($rule->getInterface() == $selected_if && empty($rule->getRawRule()['interfacenot'])) {
                         // interface view and this interface is selected
                         $is_selected = true;
                     } elseif ($selected_if == "FloatingRules" && $rule->ruleOrigin() == 'floating') {
                         // floating view, skip floating
                         $is_selected = false;
+                    } elseif (!empty($rule->getRawRule()['interfacenot'])) {
+                        // inverted interface, all but selected
+                        if (!in_array($selected_if, explode(',', $rule->getInterface()))) {
+                            $is_selected = true;
+                        }
                     } elseif (($rule->getInterface() == "" || strpos($rule->getInterface(), ",") !== false) && $selected_if == "FloatingRules") {
                         // floating type of rule and "floating" view
                         $is_selected = true;
@@ -830,6 +837,7 @@ $( document ).ready(function() {
                                 <?=$intf_count;?>
                               </a>
                           <?php elseif ($intf_count != '1' || $selected_if == 'FloatingRules'): ?>
+                            <?= !empty($rule->getRawRule()['interfacenot']) ? '!' : '';?>
                             <a style="cursor: pointer;" class='interface_tooltip' data-interfaces="<?=$rule->getInterface();?>">
                               <?=$intf_count;?>
                             </a>
@@ -968,6 +976,7 @@ $( document ).ready(function() {
                             <?=$intf_count;?>
                           </a>
                       <?php elseif ($intf_count != '1' || $selected_if == 'FloatingRules'): ?>
+                        <?= !empty($filterent['interfacenot']) ? '!' : '';?>
                         <a style="cursor: pointer;" class='interface_tooltip' data-interfaces="<?=$filterent['interface'];?>">
                           <?=$intf_count;?>
                         </a>
@@ -980,7 +989,7 @@ $( document ).ready(function() {
                     <td class="view-stats" id="<?=$rule_hash;?>_packets"><?= gettext('N/A') ?></td>
                     <td class="view-stats" id="<?=$rule_hash;?>_bytes"><?= gettext('N/A') ?></td>
                     <td  class="rule-description">
-                      <?=$filterent['descr'];?>
+                      <?= $filterent['descr'] ?? '' ?>
                       <div class="collapse rule_md5_hash">
                           <small><?=$rule_hash;?></small>
                       </div>

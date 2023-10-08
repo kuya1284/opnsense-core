@@ -49,9 +49,20 @@ final class product
 
         /* boot detection */
         $bootflag = '/var/run/booting';
-        @touch($bootflag);
+        if (!file_exists($bootflag)) {
+            @touch($bootflag);
+        }
         $fp = fopen($bootflag, 'r');
-        self::$data['product_booting'] = $fp && !flock($fp, LOCK_SH | LOCK_NB);
+        if ($fp) {
+            self::$data['product_booting'] = !flock($fp, LOCK_SH | LOCK_NB);
+            fclose($fp);
+        } else {
+            self::$data['product_booting'] = false;
+        }
+
+        /* development flag */
+        $develflag = '/var/run/development';
+        self::$data['product_development'] = file_exists($develflag);
     }
 
     private function __clone()

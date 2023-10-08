@@ -857,12 +857,23 @@ class FirmwareController extends ApiMutableModelControllerBase
         $devel = count($devel) == 2 ? $devel[1] == 'devel' : false;
 
         /* need both remote and local, create array earlier */
-        $packages = array();
-        $plugins = array();
+        $packages = [];
+        $plugins = [];
+        $tiers = [];
+
+        $current = $backend->configdRun('firmware tiers');
+        $current = explode("\n", trim($current ?? ''));
+
+        foreach ($current as $line) {
+            $expanded = explode('|||', $line);
+            if (count($expanded) == 3) {
+                $tiers[$expanded[0]] = $expanded[2];
+            }
+        }
 
         /* package infos are flat lists with 3 pipes as delimiter */
         foreach (array('remote', 'local') as $type) {
-            $current = $backend->configdRun("firmware ${type}");
+            $current = $backend->configdRun("firmware {$type}");
             $current = explode("\n", trim($current ?? ''));
 
             foreach ($current as $line) {
@@ -939,6 +950,7 @@ class FirmwareController extends ApiMutableModelControllerBase
 
         $response['plugin'] = array();
         foreach ($plugins as $plugin) {
+            $plugin['tier'] = isset($tiers[$plugin['name']]) ? $tiers[$plugin['name']] : gettext('N/A');
             $response['plugin'][] = $plugin;
         }
 

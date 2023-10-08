@@ -29,7 +29,7 @@
         var data_get_map = {'frm_GeneralSettings':"/api/unbound/settings/get"};
         mapDataToFormUI(data_get_map).done(function(data) {
             formatTokenizersUI();
-            $('.selectpicker').selectpicker({title: 'All (recommended)'}).selectpicker('render');
+            $('.selectpicker').selectpicker({title: '{{ lang._('All (recommended)') }}'}).selectpicker('render');
             $('.selectpicker').selectpicker('refresh');
         });
 
@@ -47,10 +47,10 @@
 
 <div class="content-box" style="padding-bottom: 1.5em;">
 {{ partial("layout_partials/base_form",['fields':generalForm,'id':'frm_GeneralSettings'])}}
-    <div class="col-md-12">
-        <hr/>
+    <div class="col-md-12 __mt">
         <button class="btn btn-primary" id="reconfigureAct"
                 data-endpoint='/api/unbound/service/reconfigureGeneral'
+                data-service-widget="unbound"
                 data-label="{{ lang._('Apply') }}"
                 data-error-title="{{ lang._('Error reconfiguring unbound') }}"
                 type="button">

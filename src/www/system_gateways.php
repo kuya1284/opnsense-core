@@ -111,9 +111,10 @@ function delete_gateway_item($id, $a_gateways)
 }
 
 // fetch gateway list including active default for IPv4/IPv6
-$gateways = new \OPNsense\Routing\Gateways(legacy_interfaces_details());
-$default_gwv4 = $gateways->getDefaultGW(return_down_gateways(), "inet");
-$default_gwv6 = $gateways->getDefaultGW(return_down_gateways(), "inet6");
+$down_gateways = isset($config['system']['gw_switch_default']) ? return_down_gateways() : [];
+$gateways = new \OPNsense\Routing\Gateways();
+$default_gwv4 = $gateways->getDefaultGW($down_gateways, 'inet');
+$default_gwv6 = $gateways->getDefaultGW($down_gateways, 'inet6');
 $a_gateways = array_values($gateways->gatewaysIndexedByName(true, false, true));
 $gateways_status = return_gateways_status();
 
@@ -357,7 +358,7 @@ $( document ).ready(function() {
                         <?=$gateway['gateway'];?>
                       </td>
                       <td class="hidden-xs hidden-sm hidden-md">
-                        <?=$gateway['monitor'];?>
+                        <?= $gateway['monitor'] ?? '' ?>
                       </td>
                       <td class="text-nowrap hidden-xs">
                         <?= !empty($gateways_status[$gateway['name']]) ? $gateways_status[$gateway['name']]['delay'] : "~" ?>
@@ -372,7 +373,7 @@ $( document ).ready(function() {
   <?php
                       $online = gettext('Pending');
                       $gateway_label_class = 'default';
-                      if ($gateways_status[$gateway['name']]) {
+                      if (!empty($gateways_status[$gateway['name']])) {
                           $status = $gateways_status[$gateway['name']];
                           if (stristr($status['status'], 'force_down')) {
                               $online = gettext('Offline (forced)');

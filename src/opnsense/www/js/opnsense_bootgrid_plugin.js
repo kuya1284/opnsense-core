@@ -173,25 +173,31 @@ $.fn.UIBootgrid = function (params) {
 
                     return html.join('\n');
                 },
-                "commandsWithInfo": function(column, row) {
+                commandsWithInfo: function(column, row) {
                     return '<button type="button" class="btn btn-xs btn-default command-info bootgrid-tooltip" data-row-id="' + row.uuid + '"><span class="fa fa-fw fa-info-circle"></span></button> ' +
                         '<button type="button" class="btn btn-xs btn-default command-edit bootgrid-tooltip" data-row-id="' + row.uuid + '"><span class="fa fa-fw fa-pencil"></span></button>' +
                         '<button type="button" class="btn btn-xs btn-default command-copy bootgrid-tooltip" data-row-id="' + row.uuid + '"><span class="fa fa-fw fa-clone"></span></button>' +
                         '<button type="button" class="btn btn-xs btn-default command-delete bootgrid-tooltip" data-row-id="' + row.uuid + '"><span class="fa fa-fw fa-trash-o"></span></button>';
                 },
-                "rowtoggle": function (column, row) {
+                rowtoggle: function (column, row) {
                     if (parseInt(row[column.id], 2) === 1) {
                         return '<span style="cursor: pointer;" class="fa fa-fw fa-check-square-o command-toggle bootgrid-tooltip" data-value="1" data-row-id="' + row.uuid + '"></span>';
                     } else {
                         return '<span style="cursor: pointer;" class="fa fa-fw fa-square-o command-toggle bootgrid-tooltip" data-value="0" data-row-id="' + row.uuid + '"></span>';
                     }
                 },
-                "boolean": function (column, row) {
+                boolean: function (column, row) {
                     if (parseInt(row[column.id], 2) === 1) {
                         return "<span class=\"fa fa-fw fa-check\" data-value=\"1\" data-row-id=\"" + row.uuid + "\"></span>";
                     } else {
                         return "<span class=\"fa fa-fw fa-times\" data-value=\"0\" data-row-id=\"" + row.uuid + "\"></span>";
                     }
+                },
+                bytes: function(column, row) {
+                    if (row[column.id] && row[column.id] > 0) {
+                        return byteFormat(row[column.id], 2);
+                    }
+                    return '';
                 },
             },
             onBeforeRenderDialog: null
@@ -316,7 +322,7 @@ $.fn.UIBootgrid = function (params) {
         if (editAlert !== undefined) {
             $("#"+editAlert).slideDown(1000, function(){
                 setTimeout(function(){
-                    $("#"+editAlert).slideUp(2000);
+                    $("#"+editAlert).not(":animated").slideUp(2000);
                 }, 2000);
             });
         }
@@ -360,6 +366,7 @@ $.fn.UIBootgrid = function (params) {
             ajaxCall(params['del'] + uuid, {},function(data,status){
                 // reload grid after delete
                 std_bootgrid_reload(this_grid.attr('id'));
+                this_grid.showSaveAlert(event);
             });
         });
     };
@@ -379,6 +386,7 @@ $.fn.UIBootgrid = function (params) {
                 // refresh after load
                 $.when.apply(null, deferreds).done(function(){
                     std_bootgrid_reload(this_grid.attr('id'));
+                    this_grid.showSaveAlert(event);
                 });
             }
         });
@@ -453,6 +461,7 @@ $.fn.UIBootgrid = function (params) {
         ajaxCall(params['toggle'] + uuid, {},function(data,status){
             // reload grid after delete
             std_bootgrid_reload(this_grid.attr('id'));
+            this_grid.showSaveAlert(event);
         });
     };
 

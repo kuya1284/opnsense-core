@@ -33,7 +33,7 @@ require_once("system.inc");
 require_once("interfaces.inc");
 
 $all_intf_details = legacy_interfaces_details();
-$a_gateways = (new \OPNsense\Routing\Gateways($all_intf_details))->gatewaysIndexedByName();
+$a_gateways = (new \OPNsense\Routing\Gateways())->gatewaysIndexedByName();
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $pconfig = array();
@@ -87,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     if (!empty($pconfig['domain']) && !is_domain($pconfig['domain'])) {
         $input_errors[] = gettext("The domain may only contain the characters a-z, 0-9, '-' and '.'.");
     }
-    if (!empty($pconfig['dnssearchdomain']) && !is_domain($pconfig['dnssearchdomain'])) {
+    if (!empty($pconfig['dnssearchdomain']) && !is_domain($pconfig['dnssearchdomain'], true)) {
         $input_errors[] = gettext("A search domain may only contain the characters a-z, 0-9, '-' and '.'.");
     }
 
@@ -454,7 +454,7 @@ $( document ).ready(function() {
               <td>
                 <input name="dnssearchdomain" type="text" value="<?= $pconfig['dnssearchdomain'] ?>" />
                 <div class="hidden" data-for="help_for_dnssearchdomain">
-                  <?= gettext('Enter an additional domain to add to the local list of search domains.') ?>
+                  <?= gettext('Enter an additional domain to add to the local list of search domains. Use "." to disable passing any search domain for resolving.') ?>
                 </div>
               </td>
             </tr>

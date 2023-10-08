@@ -36,7 +36,7 @@ require_once 'IPv6.inc';
 function killbyname($procname, $sig = 'TERM', $waitforit = true)
 {
     /* pgrep -n only kills the newest matching process */
-    _killbypid(shell_safe('/bin/pgrep -anx %s', $procname), $sig, $waitforit);
+    _killbypid(shell_safe('/bin/pgrep -anx %s', $procname), $sig, $waitforit, "name:$procname");
 }
 
 function killbypid($pid_or_file, $sig = 'TERM', $waitforit = true)
@@ -47,16 +47,16 @@ function killbypid($pid_or_file, $sig = 'TERM', $waitforit = true)
         $pid = trim(@file_get_contents($pid_or_file) ?? '');
     }
 
-    _killbypid($pid, $sig, $waitforit);
+    _killbypid($pid, $sig, $waitforit, "pid:$pid_or_file");
 }
 
-function _killbypid($pid, $sig, $waitforit)
+function _killbypid($pid, $sig, $waitforit, $caller)
 {
     if (!is_numeric($pid) || $pid <= 1) {
         return;
     }
 
-    mwexecf('/bin/kill -%s %s', [$sig, $pid]);
+    mwexecf('/bin/kill -%s %s', [$sig, $pid], $caller);
 
     if (!$waitforit || $sig == 'HUP') {
         return;
@@ -198,16 +198,6 @@ function service_control_get($name, $extras)
     return $service;
 }
 
-function service_control_status($name, $extras)
-{
-    $service = service_control_get($name, $extras);
-    if (!is_array($service)) {
-        return $service;
-    }
-
-    return htmlspecialchars(service_message($service));
-}
-
 function service_control_start($name, $extras)
 {
     $service = service_control_get($name, $extras);
@@ -314,36 +304,6 @@ function mark_subsystem_dirty($subsystem = '')
 function clear_subsystem_dirty($subsystem = '')
 {
     @unlink("/tmp/{$subsystem}.dirty");
-}
-
-/* lock configuration file */
-function lock($lock, $op = LOCK_SH)
-{
-    if (!$lock) {
-        die(gettext("WARNING: You must give a name as parameter to lock() function."));
-    }
-
-    if (!file_exists("{/tmp/{$lock}.lock")) {
-        @touch("/tmp/{$lock}.lock");
-        @chmod("/tmp/{$lock}.lock", 0666);
-    }
-
-    if ($fp = fopen("/tmp/{$lock}.lock", "w")) {
-        if (flock($fp, $op)) {
-            return $fp;
-        } else {
-            fclose($fp);
-        }
-    }
-}
-
-/* unlock configuration file */
-function unlock($cfglckkey = null)
-{
-    if ($cfglckkey) {
-        flock($cfglckkey, LOCK_UN);
-        fclose($cfglckkey);
-    }
 }
 
 function exit_on_bootup($callback = null, $arguments = [])
@@ -473,7 +433,12 @@ function calculate_ipv6_delegation_length($if)
             break;
         case 'dhcp6':
             $dhcp6cfg = $config['interfaces'][$if];
-            if (is_numeric($dhcp6cfg['dhcp6-ia-pd-len'])) {
+            if (!empty($dhcp6cfg['adv_dhcp6_config_file_override'])) {
+                /* emit error since we cannot cope with custom config */
+                $pdlen = -1;
+            } elseif (!empty($dhcp6cfg['adv_dhcp6_config_advanced']) && is_numeric($dhcp6cfg['adv_dhcp6_prefix_interface_statement_sla_len'])) {
+                $pdlen = $dhcp6cfg['adv_dhcp6_prefix_interface_statement_sla_len'];
+            } elseif (is_numeric($dhcp6cfg['dhcp6-ia-pd-len'])) {
                 $pdlen = $dhcp6cfg['dhcp6-ia-pd-len'];
             }
             break;
@@ -577,6 +542,11 @@ function find_smallest_cidr6($ips)
 /* merge IPv6 address prefix of default size 64 with suffix */
 function merge_ipv6_address($prefix, $suffix, $size = 64)
 {
+    if (strpos($suffix, '::') !== 0) {
+        /* do not override full addresses */
+        return $suffix;
+    }
+
     $size = 128 - $size;
 
     $prefix_bits = unpack('N*', inet_pton($prefix));
@@ -744,16 +714,17 @@ function is_hostname($hostname)
 }
 
 /* returns true if $domain is a valid domain name */
-function is_domain($domain)
+function is_domain($domain, $allow_root = false)
 {
     if (!is_string($domain)) {
         return false;
-    }
-    if (preg_match('/^(?:(?:[a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])\.)*(?:[a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$/i', $domain)) {
+    } elseif (preg_match('/^(?:(?:[a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])\.)*(?:[a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$/i', $domain)) {
         return true;
-    } else {
-        return false;
+    } elseif ($allow_root && $domain == '.') {
+        return true;
     }
+
+    return false;
 }
 
 /* returns true if $macaddr is a valid MAC address */
@@ -977,9 +948,9 @@ function mwexec($command, $mute = false)
     $garbage = exec("{$command} 2>&1", $oarr, $retval);
     unset($garbage);
 
-    if ($retval != 0 && $mute == false) {
+    if ($retval != 0 && $mute !== true) {
         $output = implode(' ', $oarr);
-        log_msg(sprintf("The command '%s' returned exit code '%d', the output was '%s'", $command, $retval, $output), LOG_ERR);
+        log_msg(sprintf("The command '%s'%s returned exit code '%d', the output was '%s'", $command, !empty($mute) ? "($mute) " : '', $retval, $output), LOG_ERR);
         unset($output);
     }
 

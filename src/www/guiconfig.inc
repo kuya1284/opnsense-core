@@ -31,6 +31,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* check before 'product' class is known to catch all errors */
 if (file_exists('/var/run/development')) {
     ini_set('display_errors', 0);
 }
@@ -421,11 +422,11 @@ function pconfig_to_address(&$adr, $padr, $pmask, $pnot = false, $pbeginport = 0
     } else {
         $adr['address'] = $padr;
         if (is_ipaddrv6($padr)) {
-            if ($pmask != 128) {
+            if ($pmask != '' && $pmask != 128) {
                 $adr['address'] .= "/" . $pmask;
             }
         } else {
-            if ($pmask != 32) {
+            if ($pmask != '' && $pmask != 32) {
                 $adr['address'] .= "/" . $pmask;
             }
         }

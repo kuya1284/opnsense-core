@@ -32,6 +32,7 @@
 
 require_once("guiconfig.inc");
 require_once("interfaces.inc");
+require_once("console.inc");
 require_once("filter.inc");
 require_once("rrd.inc");
 require_once("system.inc");
@@ -76,7 +77,6 @@ $areas = array(
     'dhcrelay' => gettext('DHCP Relay'),
     'dhcrelay6' => gettext('DHCPv6 Relay'),
     'dnsmasq' => gettext('Dnsmasq DNS'),
-    'dyndnses' => gettext('Dynamic DNS'),
     'dnsupdates' => gettext('RFC 2136'),
     'filter' => gettext('Firewall Rules'),
     'gateways' => gettext('Gateways'),
@@ -110,7 +110,7 @@ $do_reboot = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $pconfig = array();
-
+    $pconfig['backupcount'] = isset($config['system']['backupcount']) ? $config['system']['backupcount'] : null;
     foreach ($backupFactory->listProviders() as $providerId => $provider) {
         foreach ($provider['handle']->getConfigurationFields() as $field) {
             $fieldId = $providerId . "_" .$field['name'];
@@ -224,6 +224,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 }
             } else {
                 /* restore the entire configuration */
+                $cfieldnames = [
+                    'usevirtualterminal',
+                    'primaryconsole',
+                    'secondaryconsole',
+                    'serialspeed',
+                    'serialusb',
+                    'disableconsolemenu'
+                ];
+                $csettings = [];
+                foreach ($cfieldnames as $fieldname) {
+                    $csettings[$fieldname] = $config['system'][$fieldname] ?? null;
+                }
                 $filename = $_FILES['conffile']['tmp_name'];
                 file_put_contents($filename, $data);
                 $cnf = OPNsense\Core\Config::getInstance();
@@ -232,11 +244,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                         $do_reboot = true;
                     }
                     $config = parse_config();
-                    /* extract out rrd items, unset from $config when done */
-                    if($config['rrddata']) {
-                        /* XXX we should point to the data... */
-                        rrd_import();
-                        unset($config['rrddata']);
+                    if (!empty($pconfig['keepconsole'])) {
+                        // restore existing console settings
+                        foreach ($csettings as $fieldname => $fieldcontent) {
+                            if ($fieldcontent === null && isset($config[$fieldname])) {
+                                unset($config[$fieldname]);
+                            } else {
+                                $config['system'][$fieldname] = $fieldcontent;
+                            }
+                        }
+                    }
+                    if (!empty($config['rrddata']) || !empty($pconfig['keepconsole'])){
+                        /* extract out rrd items, unset from $config when done */
+                        if (!empty($config['rrddata'])) {
+                            /* XXX we should point to the data... */
+                            rrd_import();
+                            unset($config['rrddata']);
+                        }
                         write_config();
                         convert_config();
                     }
@@ -247,7 +271,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             }
 
             if ($do_reboot) {
-                $savemsg .= ' ' . gettext("The system is rebooting now. This may take one minute.");
+                if (is_interface_mismatch()) {
+                    $do_reboot = false;
+                    $savemsg .= ' ' . sprintf(
+                        gettext(
+                            "Postponing reboot as interfaces do not seem to match, please check %s assignments %s first and reboot manually."
+                        ),
+                        '<a href="/interfaces_assign.php">',
+                        '</a>'
+                    );
+                } else {
+                    $savemsg .= ' ' . gettext("The system is rebooting now. This may take one minute.");
+                }
             }
         }
     } elseif (!empty($mode)){
@@ -288,6 +323,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 }
             }
             system_cron_configure();
+        }
+    } elseif (!empty($pconfig['save'])) {
+        if ($pconfig['backupcount'] != null && (!is_numeric($pconfig['backupcount']) || $pconfig['backupcount'] <= 0)) {
+            $input_errors[] = gettext('Backup count must be greater than zero.');
+        }
+        if (count($input_errors) == 0) {
+            if ($pconfig['backupcount'] != null) {
+                $config['system']['backupcount'] = $pconfig['backupcount'];
+            } elseif (isset($config['system']['backupcount'])) {
+                unset($config['system']['backupcount']);
+            }
+            write_config('Changed backup revision count');
+            $savemsg = get_std_save_message();
         }
     }
 }
@@ -339,6 +387,32 @@ $( document ).ready(function() {
       <?php if (isset($input_messages)) print_info_box($input_messages); ?>
       <?php if (isset($input_errors) && count($input_errors) > 0) print_input_errors($input_errors); ?>
       <form method="post" enctype="multipart/form-data">
+        <section class="col-xs-12">
+            <div class="content-box tab-content table-responsive __mb">
+                <table class="table table-striped">
+                    <div class="content-box tab-content table-responsive __mb">
+                    <table class="table table-striped">
+                        <tbody>
+                            <tr>
+                                <td colspan="2"><strong><?= gettext('Backup Count') ?></strong></td>
+                            </tr>
+                            <tr>
+                                <td><input name="backupcount" type="text" size="5" value="<?= html_safe($pconfig['backupcount']) ?>"/></td>
+                                <td><?= gettext("Enter the number of older configurations to keep in the local backup cache."); ?></td>
+                            </tr>
+                            <tr>
+                                <td><input name="save" type="submit" class="btn btn-primary" value="<?= html_safe(gettext('Save')) ?>"/></td>
+                                <td>
+                                    <?= gettext('Be aware of how much space is consumed by backups before adjusting this value.'); ?>
+<?php if (count(OPNsense\Core\Config::getInstance()->getBackups(true)) > 0): ?>
+                                    <?= gettext('Current space used:') . ' ' . exec("/usr/bin/du -sh /conf/backup | /usr/bin/awk '{print $1;}'") ?>
+<?php endif ?>
+                                </td>
+                            </tr>
+                        </tbody>
+                </table>
+            </div>
+        </section>
         <section class="col-xs-12">
           <div class="content-box tab-content table-responsive __mb">
             <table class="table table-striped">
@@ -398,6 +472,8 @@ $( document ).ready(function() {
                     <input name="conffile" type="file" id="conffile" /><br/>
                     <input name="rebootafterrestore" type="checkbox" id="rebootafterrestore" checked="checked" />
                     <?=gettext("Reboot after a successful restore."); ?><br/>
+                    <input name="keepconsole" type="checkbox" id="keepconsole" checked="checked" />
+                    <?=gettext("Exclude console settings from import."); ?><br/>
                     <input name="decrypt" type="checkbox" id="decryptconf"/>
                     <?=gettext("Configuration file is encrypted."); ?>
                     <div class="hidden table-responsive __mt" id="decrypt_opts">

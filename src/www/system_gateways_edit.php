@@ -31,9 +31,9 @@ require_once("guiconfig.inc");
 require_once("interfaces.inc");
 require_once("plugins.inc.d/dpinger.inc");
 
-$gateways = new \OPNsense\Routing\Gateways(legacy_interfaces_details());
+$gateways = new \OPNsense\Routing\Gateways();
 $a_gateways = array_values($gateways->gatewaysIndexedByName(true, false, true));
-$dpinger_default = dpinger_defaults();
+$dpinger_default = $gateways->getDpingerDefaults();
 
 // form processing
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -56,8 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     /* skip system gateways which have been automatically added */
-    if (!empty($pconfig['gateway']) && !is_ipaddr($pconfig['gateway']) &&
-        $pconfig['attribute'] !== "system" && $pconfig['gateway'] != "dynamic") {
+    if (!empty($pconfig['gateway']) && !is_ipaddr($pconfig['gateway']) && is_numeric($pconfig['attribute']) && $pconfig['gateway'] != 'dynamic') {
         $input_errors[] = gettext("A valid gateway IP address must be specified.");
     }
 
@@ -175,23 +174,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 continue;
             }
-            if (!empty($pconfig['name'])) {
-                if (!empty($gateway['name']) && $pconfig['name'] == $gateway['name'] && $gateway['attribute'] !== "system") {
-                    $input_errors[] = sprintf(gettext('The gateway name "%s" already exists.'), $pconfig['name']);
-                    break;
-                }
+            if (!is_numeric($gateway['attribute'])) {
+                /* no checks for automatic gateways */
+                continue;
             }
-            if (is_ipaddr($pconfig['gateway'])) {
-                if (!empty($gateway['name']) && $pconfig['gateway'] == $gateway['gateway'] && $gateway['attribute'] !== "system") {
-                    $input_errors[] = sprintf(gettext('The gateway IP address "%s" already exists.'), $pconfig['gateway']);
-                    break;
-                }
+            if (!empty($pconfig['name']) && !empty($gateway['name']) && $pconfig['name'] == $gateway['name']) {
+                $input_errors[] = sprintf(gettext('The gateway name "%s" already exists.'), $pconfig['name']);
+                break;
             }
-            if (is_ipaddr($pconfig['monitor'])) {
-                if (!empty($gateway['monitor']) && $pconfig['monitor'] == $gateway['monitor'] && $gateway['attribute'] !== "system") {
-                    $input_errors[] = sprintf(gettext('The monitor IP address "%s" is already in use. You must choose a different monitor IP.'), $pconfig['monitor']);
-                    break;
-                }
+            if (is_ipaddr($pconfig['gateway']) && !empty($gateway['gateway']) && $pconfig['gateway'] == $gateway['gateway']) {
+                $input_errors[] = sprintf(gettext('The gateway IP address "%s" already exists.'), $pconfig['gateway']);
+                break;
+            }
+            if (is_ipaddr($pconfig['monitor']) && !empty($gateway['monitor']) && $pconfig['monitor'] == $gateway['monitor']) {
+                $input_errors[] = sprintf(gettext('The monitor IP address "%s" is already in use.'), $pconfig['monitor']);
+                break;
             }
         }
     }
@@ -203,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     /****
     /* XXX: dpinger needs to take defaults under consideration
     /****/
-    $dpinger_config = dpinger_defaults();
+    $dpinger_config = $gateways->getDpingerDefaults();
     foreach ($dpinger_config as $prop => $value) {
         $dpinger_config[$prop] = !empty($pconfig[$prop]) ? $pconfig[$prop] : $value;
     }
@@ -252,12 +249,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $input_errors[] = gettext("The probe interval needs to be positive.");
     }
 
-    if (!is_numeric($dpinger_config['alert_interval'])) {
-        $input_errors[] = gettext("The alert interval needs to be a numeric value.");
-    } elseif ($dpinger_config['alert_interval'] < 1) {
-        $input_errors[] = gettext("The alert interval needs to be positive.");
-    }
-
     if (!is_numeric($dpinger_config['data_length'])) {
         $input_errors[] = gettext("The data length needs to be a numeric value.");
     } elseif ($dpinger_config['data_length'] < 0) {
@@ -286,7 +277,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $a_gateway_item = &config_read_array('gateways', 'gateway_item');
-        $reloadif = "";
         $gateway = array();
 
         $gateway['interface'] = $pconfig['interface'];
@@ -327,7 +317,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $gateway['defaultgw'] = ($pconfig['defaultgw'] == "yes" || $pconfig['defaultgw'] == "on");
 
-        foreach (array('alert_interval', 'latencylow', 'latencyhigh', 'loss_interval', 'losslow', 'losshigh', 'time_period', 'data_length') as $fieldname) {
+        foreach (['latencylow', 'latencyhigh', 'loss_interval', 'losslow', 'losshigh', 'time_period', 'data_length'] as $fieldname) {
             if (!empty($pconfig[$fieldname])) {
                 $gateway[$fieldname] = $pconfig[$fieldname];
             }
@@ -359,8 +349,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($pconfig['isAjax'])) {
             echo $pconfig['name'];
             exit;
-        } elseif (!empty($reloadif)) {
-            configdp_run('interface reconfigure', array($reloadif));
         }
 
         header(url_safe('Location: /system_gateways.php'));
@@ -407,7 +395,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'monitor_noroute',
         'name',
         'weight',
-        'alert_interval',
         'data_length',
         'time_period',
         'loss_interval',
@@ -454,7 +441,7 @@ $( document ).ready(function() {
 
     // (un)hide advanced on form load when any advanced setting is provided
 <?php
-  if ((!empty($pconfig['latencylow']) || !empty($pconfig['latencyhigh']) || !empty($pconfig['data_length']) || !empty($pconfig['losslow']) || !empty($pconfig['losshigh']) || (isset($pconfig['weight']) && $pconfig['weight'] > 1) || (!empty($pconfig['interval']) && ($pconfig['interval'] > $dpinger_default['interval'])) || (!empty($pconfig['alert_interval']) && ($pconfig['alert_interval'] > $dpinger_default['alert_interval'])) || (!empty($pconfig['time_period']) && ($pconfig['time_period'] > $dpinger_default['time_period'])) || (!empty($pconfig['loss_interval']) && ($pconfig['loss_interval'] > $dpinger_default['loss_interval'])))): ?>
+  if ((!empty($pconfig['latencylow']) || !empty($pconfig['latencyhigh']) || !empty($pconfig['data_length']) || !empty($pconfig['losslow']) || !empty($pconfig['losshigh']) || (isset($pconfig['weight']) && $pconfig['weight'] > 1) || (!empty($pconfig['interval']) && ($pconfig['interval'] > $dpinger_default['interval'])) || (!empty($pconfig['time_period']) && ($pconfig['time_period'] > $dpinger_default['time_period'])) || (!empty($pconfig['loss_interval']) && ($pconfig['loss_interval'] > $dpinger_default['loss_interval'])))): ?>
     $("#btn_advanced").click();
 <?php
   endif;?>
@@ -471,11 +458,9 @@ $( document ).ready(function() {
       <section class="col-xs-12">
         <div class="content-box  table-responsive">
             <form method="post" name="iform" id="iform">
-<?php
-            if ($pconfig['attribute'] == "system" || is_numeric($pconfig['attribute'])):?>
-              <input type='hidden' name='attribute' id='attribute' value="<?=$pconfig['attribute'];?>"/>
-<?php
-            endif;?>
+<?php if (is_numeric($pconfig['attribute'])): ?>
+              <input type="hidden" name="attribute" id="attribute" value="<?= html_safe($pconfig['attribute']) ?>"/>
+<?php endif ?>
               <table class="table table-striped opnsense_standard_table_form">
                 <tr>
                   <td style="width:22%"><?=gettext("Edit gateway");?></td>
@@ -572,9 +557,9 @@ $( document ).ready(function() {
                   </td>
                 </tr>
                 <tr>
-                  <td><a id="help_for_monitor_noroute" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?=gettext("Disable Host Route "); ?></td>
+                  <td><a id="help_for_monitor_noroute" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?=gettext('Disable Host Route') ?></td>
                   <td>
-                    <input name="monitor_noroute" type="checkbox" value="yes" <?=!empty($pconfig['monitor_noroute']) ? "checked=\"checked\"" : "";?>/>
+                    <input name="monitor_noroute" type="checkbox" value="yes" <?=!empty($pconfig['monitor_noroute']) ? 'checked="checked"' : '' ?>/>
                     <div class="hidden" data-for="help_for_monitor_noroute">
                       <?= gettext('Do not create a dedicated host route for this monitor.') ?>
                     </div>
@@ -707,15 +692,6 @@ $( document ).ready(function() {
                     </div>
                   </td>
                 </tr>
-                 <tr class="advanced hidden">
-                  <td><a id="help_for_alert_interval" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?=gettext("Alert Interval");?></td>
-                  <td>
-                    <input name="alert_interval" id="alert_interval" type="text" value="<?=$pconfig['alert_interval'];?>" />
-                    <div class="hidden" data-for="help_for_alert_interval">
-                      <?= sprintf(gettext('Time interval between alerts. Default is %d.'), $dpinger_default['alert_interval']) ?>
-                    </div>
-                  </td>
-                </tr>
                 <tr class="advanced hidden">
                   <td><a id="help_for_time_period" href="#" class="showhelp"><i class="fa fa-info-circle"></i></a> <?=gettext("Time Period");?></td>
                   <td>
@@ -730,7 +706,7 @@ $( document ).ready(function() {
                   <td>
                     <input name="loss_interval" id="loss_interval" type="text" value="<?=$pconfig['loss_interval'];?>" />
                     <div class="hidden" data-for="help_for_loss_interval">
-                      <?= sprintf(gettext('Time interval before packets are treated as lost. Default is %d.'), $dpinger_default['loss_interval']) ?>
+                      <?= sprintf(gettext('Time interval before packets are treated as lost. Default is %d, calculated as four times the probe interval.'), $dpinger_default['loss_interval']) ?>
                     </div>
                   </td>
                 </tr>

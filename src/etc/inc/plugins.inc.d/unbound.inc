@@ -2,7 +2,7 @@
 
 /*
  * Copyright (C) 2018 Fabian Franz
- * Copyright (C) 2015-2021 Franco Fichtner <franco@opnsense.org>
+ * Copyright (C) 2015-2023 Franco Fichtner <franco@opnsense.org>
  * Copyright (C) 2015 Manuel Faux <mfaux@conf.at>
  * Copyright (C) 2014 Warren Baker <warren@decoy.co.za>
  * Copyright (C) 2004-2007 Scott Ullrich <sullrich@gmail.com>
@@ -222,7 +222,6 @@ function unbound_generate_config()
     }
 
     unbound_add_host_entries($ifconfig_details);
-    unbound_acls_config();
 
     $port = $general['port'];
 
@@ -315,9 +314,6 @@ module-config: "{$module_config}"
 # Private domains (DNS Rebinding)
 include: /var/unbound/private_domains.conf
 
-# Access lists
-include: /var/unbound/access_lists.conf
-
 # Static host entries
 include: /var/unbound/host_entries.conf
 
@@ -352,10 +348,49 @@ function unbound_cache_flush()
     configd_run('unbound cache flush');
 }
 
-function unbound_configure_do($verbose = false, $unused = '')
+function unbound_match_interface($interface)
+{
+    $general = config_read_array('OPNsense', 'unboundplus', 'general');
+
+    if (empty($interface)) {
+        /* emulate non-interface reload */
+        return true;
+    }
+
+    if (!empty($general['active_interface'])) {
+        foreach (explode(',', $general['active_interface']) as $used) {
+            if ($used == $interface) {
+                return true;
+            }
+        }
+    }
+
+    if (!empty($general['outgoing_interface'])) {
+        foreach (explode(',', $general['outgoing_interface']) as $used) {
+            if ($used == $interface) {
+                return true;
+            }
+        }
+    }
+
+    /*
+     * We can ignore this request as we don't listen here
+     * or always listen on :: / 0.0.0.0 so that a reload
+     * is not necessary.
+     */
+    return false;
+}
+
+function unbound_configure_do($verbose = false, $interface = null)
 {
     global $config;
+
     $mdl = new \OPNsense\Unbound\Unbound();
+
+    /* try to avoid restarting, but make sure to let it start if it is not running */
+    if (!unbound_match_interface($interface) && isvalidpid('/var/run/unbound.pid')) {
+        return;
+    }
 
     unbound_service_stop();
 
@@ -375,7 +410,7 @@ function unbound_configure_do($verbose = false, $unused = '')
         }
     }
 
-    if (isset($config['unbound']['stats'])) { /* XXX */
+    if (!empty((string)$mdl->general->stats)) {
         @touch('/var/unbound/data/stats');
     } else {
         @unlink('/var/unbound/data/stats');
@@ -423,7 +458,7 @@ function unbound_add_host_entries($ifconfig_details)
             }
 
             list ($laddr) = interfaces_primary_address($interface, $ifconfig_details);
-            list ($laddr6) = interfaces_primary_address6($interface, $ifconfig_details);
+            list ($laddr6) = interfaces_routed_address6($interface, $ifconfig_details);
 
             foreach (['4' => $laddr, '6' => $laddr6] as $ip_version => $addr) {
                 if (empty($addr)) {
@@ -548,22 +583,22 @@ function unbound_add_host_entries($ifconfig_details)
     }
 
     if (!empty($general['regdhcpstatic'])) {
-        require_once 'plugins.inc.d/dhcpd.inc';  /* XXX */
-
-        foreach (dhcpd_staticmap($config['system']['domain'], $ifconfig_details) as $host) {
-            if (empty($host['hostname'])) {
-                /* cannot register without a hostname */
-                continue;
-            }
-            if (isset($host['ipaddr'])) {
-                $unbound_entries .= "local-data-ptr: \"{$host['ipaddr']} {$host['hostname']}.{$host['domain']}\"\n";
-                $unbound_entries .= "local-data: \"{$host['hostname']}.{$host['domain']} IN A {$host['ipaddr']}\"\n";
-            } else {
-                $unbound_entries .= "local-data-ptr: \"{$host['ipaddrv6']} {$host['hostname']}.{$host['domain']}\"\n";
-                $unbound_entries .= "local-data: \"{$host['hostname']}.{$host['domain']} IN AAAA {$host['ipaddrv6']}\"\n";
-            }
-            if (!empty($host['descr']) && !empty($general['txtsupport'])) {
-                $unbound_entries .= "local-data: '{$host['hostname']}.{$host['domain']} TXT \"" . addslashes($host['descr']) . "\"'\n";
+        foreach (plugins_run('static_mapping', [null, true, $config['system']['domain'], $ifconfig_details]) as $map) {
+            foreach ($map as $host) {
+                if (empty($host['hostname'])) {
+                    /* cannot register without a hostname */
+                    continue;
+                }
+                if (isset($host['ipaddr'])) {
+                    $unbound_entries .= "local-data-ptr: \"{$host['ipaddr']} {$host['hostname']}.{$host['domain']}\"\n";
+                    $unbound_entries .= "local-data: \"{$host['hostname']}.{$host['domain']} IN A {$host['ipaddr']}\"\n";
+                } else {
+                    $unbound_entries .= "local-data-ptr: \"{$host['ipaddrv6']} {$host['hostname']}.{$host['domain']}\"\n";
+                    $unbound_entries .= "local-data: \"{$host['hostname']}.{$host['domain']} IN AAAA {$host['ipaddrv6']}\"\n";
+                }
+                if (!empty($host['descr']) && !empty($general['txtsupport'])) {
+                    $unbound_entries .= "local-data: '{$host['hostname']}.{$host['domain']} TXT \"" . addslashes($host['descr']) . "\"'\n";
+                }
             }
         }
     }
@@ -572,85 +607,4 @@ function unbound_add_host_entries($ifconfig_details)
 
     closelog();
     reopenlog();
-}
-
-function unbound_acls_subnets()
-{
-    global $config;
-    $general = config_read_array('OPNsense', 'unboundplus', 'general');
-
-    $any = true;
-
-    if (!empty($general['active_interface'])) {
-        $active_interfaces = array_flip(explode(',', $general['active_interface']));
-        $any = false;
-    } else {
-        $active_interfaces = get_configured_interface_with_descr();
-    }
-
-    /* in case of OpenVPN interface we need to correct the subnet */
-    foreach (array('server', 'client') as $mode) {
-        foreach (config_read_array('openvpn', "openvpn-{$mode}") as $id => $setting) {
-            $ovpn = 'ovpn' . substr($mode, 0, 1) . $setting['vpnid'];
-            if (!$any && !array_key_exists($ovpn, $active_interfaces)) {
-                continue;
-            }
-            $active_interfaces[$ovpn] = [];
-            if (!empty($setting['tunnel_network'])) {
-                $active_interfaces[$ovpn]['net4'] = explode('/', $setting['tunnel_network'])[1];
-            }
-            if (!empty($setting['tunnel_networkv6'])) {
-                $active_interfaces[$ovpn]['net6'] = explode('/', $setting['tunnel_networkv6'])[1];
-            }
-        }
-    }
-
-    /* add our networks for active interfaces including localhost */
-    $subnets = array('127.0.0.1/8', '::1/64');
-
-    foreach (interfaces_addresses(array_keys($active_interfaces), true) as $subnet => $info) {
-        if (!$info['bind']) {
-            continue;
-        }
-
-        if (!empty($active_interfaces[$info['name']]['net4']) && is_subnetv4($subnet)) {
-            $subnet = explode('/', $subnet)[0] . '/' . $active_interfaces[$info['name']]['net4'];
-        } elseif (!empty($active_interfaces[$info['name']]['net6']) && is_subnetv6($subnet) && !$info['scope']) {
-            $subnet = explode('/', $subnet)[0] . '/' . $active_interfaces[$info['name']]['net6'];
-        }
-        $subnets[] = $subnet;
-    }
-
-    return array_unique($subnets);
-}
-
-function unbound_acls_config()
-{
-    global $config;
-
-    $subnets = unbound_acls_subnets();
-    $aclcfg = '';
-
-    foreach ($subnets as $subnet) {
-        $aclcfg .= "access-control: {$subnet} allow\n";
-    }
-
-    // Configure the custom ACLs
-    if (isset($config['unbound']['acls'])) {
-        foreach ($config['unbound']['acls'] as $unbound_acl) {
-            $aclcfg .= "#{$unbound_acl['aclname']}\n";
-            foreach ($unbound_acl['row'] as $network) {
-                if ($unbound_acl['aclaction'] == "allow snoop") {
-                    $unbound_acl['aclaction'] = "allow_snoop";
-                } elseif ($unbound_acl['aclaction'] == "deny nonlocal") {
-                        $unbound_acl['aclaction'] = "deny_non_local";
-                } elseif ($unbound_acl['aclaction'] == "refuse nonlocal") {
-                        $unbound_acl['aclaction'] = "refuse_non_local";
-                }
-                $aclcfg .= "access-control: {$network['acl_network']}/{$network['mask']} {$unbound_acl['aclaction']}\n";
-            }
-        }
-    }
-
-    file_put_contents('/var/unbound/access_lists.conf', $aclcfg);
 }

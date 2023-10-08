@@ -323,7 +323,7 @@ function ipsec_xmlrpc_sync()
 
     $result[] = array(
         'description' => gettext('IPsec'),
-        'section' => 'ipsec,OPNsense.Swanctl',
+        'section' => 'ipsec,OPNsense.IPsec,OPNsense.Swanctl',
         'id' => 'ipsec',
         'services' => ["strongswan"],
     );
@@ -570,7 +570,7 @@ function ipsec_idinfo_to_cidr(&$idinfo, $addrbits = false, $mode = '')
                 $mode = $idinfo['mode'];
             }
             if ($mode == 'tunnel6') {
-                list (, $network) = interfaces_primary_address6($idinfo['type']);
+                list (, $network) = interfaces_routed_address6($idinfo['type']);
                 return $network;
             } else {
                 list (, $network) = interfaces_primary_address($idinfo['type']);
@@ -827,12 +827,11 @@ function ipsec_configure_spd()
 function ipsec_setup_pinghosts()
 {
     global $config;
+
     $a_phase1 = isset($config['ipsec']['phase1']) ? $config['ipsec']['phase1'] : [];
     $a_phase2 = isset($config['ipsec']['phase2']) ? $config['ipsec']['phase2'] : [];
 
-    /* get the automatic ping_hosts.sh ready */
     @unlink('/var/db/ipsecpinghosts');
-    @touch('/var/db/ipsecpinghosts');
 
     if (!isset($config['ipsec']['enable'])) {
         return;
@@ -904,7 +903,11 @@ function ipsec_setup_pinghosts()
             }
         }
     }
-    @file_put_contents('/var/db/ipsecpinghosts', $ipsecpinghosts);
+
+    if (!empty($ipsecpinghosts)) {
+        /* get the automatic ping_hosts.sh ready */
+        @file_put_contents('/var/db/ipsecpinghosts', $ipsecpinghosts);
+    }
 }
 
 /**
@@ -969,6 +972,7 @@ function ipsec_write_strongswan_conf()
 
     $strongswanTree['charon']['plugins'] = [];
 
+    $radius_auth_servers = null;
     $disable_xauth = false;
     if (isset($a_client['enable'])) {
         $net_list = [];
@@ -1048,36 +1052,43 @@ function ipsec_write_strongswan_conf()
         foreach ($a_phase1 as $ph1ent) {
             if (!isset($ph1ent['disabled']) && isset($ph1ent['mobile'])) {
                 if ($ph1ent['authentication_method'] == "eap-radius") {
-                    $disable_xauth = true; // disable Xauth when radius is used.
-                    $strongswanTree['charon']['plugins']['eap-radius'] = [];
-                    $strongswanTree['charon']['plugins']['eap-radius']['servers'] = [];
-                    $radius_server_num = 1;
-                    $radius_accounting_enabled = false;
-                    foreach (auth_get_authserver_list() as $auth_server) {
-                        if (in_array($auth_server['name'], explode(',', $ph1ent['authservers']))) {
-                            $server = [
-                                'address' => $auth_server['host'],
-                                'secret' => '"' . $auth_server['radius_secret'] . '"',
-                                'auth_port' => $auth_server['radius_auth_port'],
-                            ];
-
-                            if (!empty($auth_server['radius_acct_port'])) {
-                                $server['acct_port'] = $auth_server['radius_acct_port'];
-                            }
-                            $strongswanTree['charon']['plugins']['eap-radius']['servers']['server' . $radius_server_num] = $server;
-
-                            if (!empty($auth_server['radius_acct_port'])) {
-                                $radius_accounting_enabled = true;
-                            }
-                            $radius_server_num += 1;
-                        }
-                    }
-                    if ($radius_accounting_enabled) {
-                        $strongswanTree['charon']['plugins']['eap-radius']['accounting'] = 'yes';
-                    }
+                    $radius_auth_servers = $ph1ent['authservers'];
                     break; // there can only be one mobile phase1, exit loop
                 }
             }
+        }
+    }
+    if (empty($radius_auth_servers) && !empty($a_client['radius_source'])) {
+        $radius_auth_servers = $a_client['radius_source'];
+    }
+    if ((isset($a_client['enable']) || (new \OPNsense\IPsec\Swanctl())->isEnabled()) && !empty($radius_auth_servers)) {
+        $disable_xauth = true; // disable Xauth when radius is used.
+        $strongswanTree['charon']['plugins']['eap-radius'] = [];
+        $strongswanTree['charon']['plugins']['eap-radius']['servers'] = [];
+        $radius_server_num = 1;
+        $radius_accounting_enabled = false;
+
+        foreach (auth_get_authserver_list() as $auth_server) {
+            if (in_array($auth_server['name'], explode(',', $radius_auth_servers))) {
+                $server = [
+                    'address' => $auth_server['host'],
+                    'secret' => '"' . $auth_server['radius_secret'] . '"',
+                    'auth_port' => $auth_server['radius_auth_port'],
+                ];
+
+                if (!empty($auth_server['radius_acct_port'])) {
+                    $server['acct_port'] = $auth_server['radius_acct_port'];
+                }
+                $strongswanTree['charon']['plugins']['eap-radius']['servers']['server' . $radius_server_num] = $server;
+
+                if (!empty($auth_server['radius_acct_port'])) {
+                    $radius_accounting_enabled = true;
+                }
+                $radius_server_num += 1;
+            }
+        }
+        if ($radius_accounting_enabled) {
+            $strongswanTree['charon']['plugins']['eap-radius']['accounting'] = 'yes';
         }
     }
     if ((isset($a_client['enable']) && !$disable_xauth) || (new \OPNsense\IPsec\Swanctl())->isEnabled()) {
@@ -1127,18 +1138,22 @@ function ipsec_write_certs()
     global $config;
     $a_phase1 = isset($config['ipsec']['phase1']) ? $config['ipsec']['phase1'] : [];
 
-    $filenames = [];
     foreach ((new \OPNsense\IPsec\Swanctl())->getUsedCertrefs() as $certref) {
         $cert = lookup_cert($certref);
         if (empty($cert)) {
             log_msg(sprintf('Error: Invalid certificate reference for %s', $ph1ent['name']), LOG_ERR);
             continue;
         }
+
         $ph1keyfile = "/usr/local/etc/swanctl/private/{$certref}.key";
+        @touch($ph1keyfile);
+        @chmod($ph1keyfile, 0600);
         file_put_contents($ph1keyfile, base64_decode($cert['prv']));
+
         $ph1certfile = "/usr/local/etc/swanctl/x509/{$certref}.crt";
+        @touch($ph1certfile);
+        @chmod($ph1certfile, 0600);
         file_put_contents($ph1certfile, base64_decode($cert['crt']));
-        $filenames = array_merge($filenames, [$ph1keyfile, $ph1certfile]);
     }
     foreach ($a_phase1 as $ph1ent) {
         if (isset($ph1ent['disabled'])) {
@@ -1153,14 +1168,15 @@ function ipsec_write_certs()
             }
 
             $ph1keyfile = "/usr/local/etc/swanctl/private/cert-{$ph1ent['ikeid']}.key";
+            @touch($ph1keyfile);
+            @chmod($ph1keyfile, 0600);
             file_put_contents($ph1keyfile, base64_decode($cert['prv']));
+
             $ph1certfile = "/usr/local/etc/swanctl/x509/cert-{$ph1ent['ikeid']}.crt";
+            @touch($ph1certfile);
+            @chmod($ph1certfile, 0600);
             file_put_contents($ph1certfile, base64_decode($cert['crt']));
-            $filenames = array_merge($filenames, [$ph1keyfile, $ph1certfile]);
         }
-    }
-    foreach ($filenames as $filename) {
-        @chmod($filename, 0600);
     }
 }
 
@@ -1177,9 +1193,10 @@ function ipsec_write_keypairs()
     foreach ((new \OPNsense\IPsec\IPsec())->keyPairs->keyPair->iterateItems() as $uuid => $keyPair) {
         foreach ($paths as $key => $path) {
             if (!empty((string)$keyPair->$key)) {
-                $filename = "${path}/{$uuid}.pem";
-                file_put_contents($filename, (string)$keyPair->$key);
+                $filename = "{$path}/{$uuid}.pem";
+                @touch($filename);
                 @chmod($filename, 0600);
+                file_put_contents($filename, (string)$keyPair->$key);
                 $filenames[] = $filename;
             }
         }
@@ -1270,7 +1287,7 @@ function ipsec_configure_do($verbose = false, $interface = '')
         set_single_sysctl('net.key.preferred_oldsa', '0');
     }
 
-    $ipseccfg = $config['ipsec'];
+    $ipseccfg = $config['ipsec'] ?? [];
     $a_phase1 = isset($config['ipsec']['phase1']) ? $config['ipsec']['phase1'] : [];
     $a_phase2 = isset($config['ipsec']['phase2']) ? $config['ipsec']['phase2'] : [];
     $a_client = isset($config['ipsec']['client']) ? $config['ipsec']['client'] : [];
@@ -1302,22 +1319,21 @@ function ipsec_configure_do($verbose = false, $interface = '')
     $swanctl = (new \OPNsense\IPsec\Swanctl())->getConfig();
     $swanctl['secrets'] = ipsec_write_secrets();
 
+    if (!empty($config['ipsec']['passthrough_networks'])) {
+        $swanctl['connections']['pass'] = [
+            'remote_addrs' => '127.0.0.1',
+            'unique' => 'replace',
+            'children' => [
+                'pass' => [
+                        'local_ts' => $config['ipsec']['passthrough_networks'],
+                        'remote_ts' => $config['ipsec']['passthrough_networks'],
+                        'mode' => 'pass',
+                        'start_action' => 'route'
+                    ]
+            ]
+        ];
+    }
     if (count($a_phase1)) {
-        if (!empty($config['ipsec']['passthrough_networks'])) {
-            $swanctl['connections']['pass'] = [
-                'remote_addrs' => '127.0.0.1',
-                'unique' => 'replace',
-                'children' => [
-                    'pass' => [
-                          'local_ts' => $config['ipsec']['passthrough_networks'],
-                          'remote_ts' => $config['ipsec']['passthrough_networks'],
-                          'mode' => 'pass',
-                          'start_action' => 'route'
-                      ]
-                ]
-            ];
-        }
-
         foreach ($a_phase1 as $ph1ent) {
             if (isset($ph1ent['disabled'])) {
                 continue;

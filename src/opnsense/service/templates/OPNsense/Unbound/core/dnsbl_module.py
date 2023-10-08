@@ -196,12 +196,13 @@ class Logger:
 
     def close(self):
         if self.stats_enabled:
-            if self._pipe_fd is not None:
-                os.close(self._pipe_fd)
-            try:
-                os.unlink(self._pipe_name)
-            except:
-                pass
+            with self._lock:
+                if self._pipe_fd is not None:
+                    os.close(self._pipe_fd)
+                try:
+                    os.unlink(self._pipe_name)
+                except:
+                    pass
 
     def log_entry(self, query: Query):
         if not self.stats_enabled:
@@ -562,6 +563,10 @@ def arg_parse_is_json_file(filename):
         json.load(open(filename))
     except FileNotFoundError:
         raise argparse.ArgumentTypeError("non existing file")
+    except json.JSONDecodeError:
+        # in cases where a file exists, but we're unable to decode it (e.g. the file is empty),
+        # we should assume the blocklist has no entries.
+        pass
     except:
         raise argparse.ArgumentTypeError("No blocklist available")
 
